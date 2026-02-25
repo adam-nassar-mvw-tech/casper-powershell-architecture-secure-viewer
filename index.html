@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Protected Casper Architecture Viewer</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0b1220; color: #e5e7eb; }
+    .wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    .card { width: min(480px, 100%); background: #111827; border: 1px solid #374151; border-radius: 12px; padding: 20px; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    p { color: #9ca3af; margin: 0 0 12px; }
+    input { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid #4b5563; background: #0f172a; color: #e5e7eb; }
+    button { margin-top: 10px; width: 100%; padding: 10px 12px; border: 0; border-radius: 8px; background: #2563eb; color: white; font-weight: 600; cursor: pointer; }
+    .err { color: #fca5a5; min-height: 20px; margin-top: 10px; font-size: 14px; }
+    #viewer { display: none; width: 100vw; height: 100vh; border: 0; background: white; }
+  </style>
+</head>
+<body>
+  <div class="wrap" id="gate">
+    <div class="card">
+      <h1>Password Required</h1>
+      <p>This page is encrypted. Enter password to decrypt and view.</p>
+      <input id="pw" type="password" autocomplete="current-password" placeholder="Password" />
+      <button id="openBtn">Unlock</button>
+      <div class="err" id="err"></div>
+    </div>
+  </div>
+  <iframe id="viewer" sandbox="allow-scripts allow-same-origin"></iframe>
+
+  <script>
+    const b64ToBuf = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer;
+
+    async function decryptHtml(password, payload) {
+      const enc = new TextEncoder();
+      const passKey = await crypto.subtle.importKey(
+        'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveKey']
+      );
+
+      const key = await crypto.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt: b64ToBuf(payload.salt),
+          iterations: payload.iterations,
+          hash: 'SHA-256'
+        },
+        passKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['decrypt']
+      );
+
+      const plainBuf = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: b64ToBuf(payload.iv), tagLength: 128 },
+        key,
+        b64ToBuf(payload.data)
+      );
+
+      return new TextDecoder().decode(plainBuf);
+    }
+
+    async function unlock() {
+      const err = document.getElementById('err');
+      err.textContent = '';
+      const password = document.getElementById('pw').value;
+      if (!password) {
+        err.textContent = 'Enter a password.';
+        return;
+      }
+
+      try {
+        const payload = await fetch('./payload.json', { cache: 'no-store' }).then(r => r.json());
+        const html = await decryptHtml(password, payload);
+
+        const gate = document.getElementById('gate');
+        const viewer = document.getElementById('viewer');
+        gate.style.display = 'none';
+        viewer.style.display = 'block';
+        viewer.srcdoc = html;
+      } catch (e) {
+        err.textContent = 'Invalid password.';
+      }
+    }
+
+    document.getElementById('openBtn').addEventListener('click', unlock);
+    document.getElementById('pw').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') unlock();
+    });
+  </script>
+</body>
+</html>
